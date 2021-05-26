@@ -1,6 +1,7 @@
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader
 import org.codehaus.plexus.util.xml.Xpp3Dom
 import java.nio.file.*
+import java.util.stream.Collectors
 
 const val SUREFIRE_ARTIFACT: String = "org.apache.maven.plugins:maven-surefire-plugin"
 val DEFAULT_SUREFIRE_INCLUDES = listOf(
@@ -14,8 +15,10 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
     inner class InvalidPomException(message: String, cause: Throwable? = null) :
         RuntimeException("Invalid pom: $pom: $message", cause)
 
+    val name get() = pom.parent.fileName.toString()
+
     private val model = pom.toFile().inputStream().use(MavenXpp3Reader()::read)
-    private val modules = model.modules.orEmpty().map { it.toProjectPath() }.map {
+    val modules = model.modules.orEmpty().map { it.toProjectPath() }.map {
         val modulePom = if (Files.isDirectory(it))
             it.resolve("pom.xml")
         else if (it.toString().endsWith(".xml") && Files.isRegularFile(it))
@@ -24,6 +27,9 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
             throw InvalidPomException("invalid module specification: $it")
         PomProject(modulePom, this)
     }
+
+    val recursiveModules: List<PomProject> get() =
+        modules.flatMap { it.recursiveModules } + modules
 
     private fun Path.existsOrNull(): Path? = if (Files.exists(this)) this else null
 
@@ -39,27 +45,34 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
         null
     }
 
-    val sourceDirectory
+    val sourceDirectory: Path?
         get() = model.build.sourceDirectory?.let { it.tryToProjectPath()?.existsOrNull() }
-            ?: "src/main/java".tryToProjectPath()?.existsOrNull()!!
-    val testSourceDirectory
+            ?: "src/main/java".tryToProjectPath()?.existsOrNull()
+    val testSourceDirectory: Path?
         get() = model.build.testSourceDirectory?.let { it.tryToProjectPath()?.existsOrNull() }
-            ?: "src/test/java".tryToProjectPath()?.existsOrNull()!!
+            ?: "src/test/java".tryToProjectPath()?.existsOrNull()
 
-    private val surefireConfig by lazy {
-        model.build.pluginManagement.pluginsAsMap[SUREFIRE_ARTIFACT]?.configuration as? Xpp3Dom
+    private val parentSurefireConfig by lazy {
+        model.build.pluginManagement?.pluginsAsMap?.get(SUREFIRE_ARTIFACT)?.configuration as? Xpp3Dom
     }
+    private val surefireConfig by lazy {
+        model.build?.pluginsAsMap?.get(SUREFIRE_ARTIFACT)?.configuration as? Xpp3Dom
+            ?: parent?.parentSurefireConfig
+    }
+
     val surefireIncludes: List<String> by lazy {
-        surefireConfig?.getChild("includes")?.getChildren("include")?.map { it.value }
-            ?: parent?.surefireIncludes ?: DEFAULT_SUREFIRE_INCLUDES
+        surefireConfig?.getChildren("test")?.map { it.value }.orEmpty().toList().ifEmpty {
+            surefireConfig?.getChild("includes")?.getChildren("include")?.map { it.value }
+                ?: parent?.surefireIncludes ?: DEFAULT_SUREFIRE_INCLUDES
+        }
     }
     val surefireExcludes: List<String> by lazy {
         surefireConfig?.getChild("excludes")?.getChildren("exclude")?.map { it.value }
             ?: parent?.surefireExcludes.orEmpty()
     }
 
-    val surefireIncludeMatchers by lazy { surefireIncludes.map { FileSystems.getDefault().getPathMatcher(it) } }
-    val surefireExcludeMatchers by lazy { surefireExcludes.map { FileSystems.getDefault().getPathMatcher(it) } }
+    val surefireIncludeMatchers by lazy { surefireIncludes.map { FileSystems.getDefault().getPathMatcher("glob:$it") } }
+    val surefireExcludeMatchers by lazy { surefireExcludes.map { FileSystems.getDefault().getPathMatcher("glob:$it") } }
 
     private fun matchFile(p: Path, patterns: List<PathMatcher>): Boolean = patterns.any {
         it.matches(p)
@@ -68,7 +81,10 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
     private fun matchSurefireTest(p: Path): Boolean =
         matchFile(p, surefireIncludeMatchers) && !matchFile(p, surefireExcludeMatchers)
 
-    val allTests by lazy {
-        Files.find(testSourceDirectory, Int.MAX_VALUE, { p, _ -> matchSurefireTest(p) })
+    val allTests: List<Path>? by lazy {
+        testSourceDirectory?.let { testSourceDir ->
+            Files.find(testSourceDir, Int.MAX_VALUE, { p, attr -> !attr.isDirectory && matchSurefireTest(testSourceDir.relativize(p)) })
+                .collect(Collectors.toList())
+        }
     }
 }
