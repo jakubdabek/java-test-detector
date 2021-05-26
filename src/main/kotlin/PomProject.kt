@@ -1,10 +1,14 @@
 import org.apache.maven.model.io.xpp3.MavenXpp3Reader
 import org.codehaus.plexus.util.xml.Xpp3Dom
-import java.nio.file.Files
-import java.nio.file.InvalidPathException
-import java.nio.file.Path
+import java.nio.file.*
 
 const val SUREFIRE_ARTIFACT: String = "org.apache.maven.plugins:maven-surefire-plugin"
+val DEFAULT_SUREFIRE_INCLUDES = listOf(
+    "**/Test*.java",
+    "**/*Test.java",
+    "**/*Tests.java",
+    "**/*TestCase.java",
+)
 
 class PomProject(val pom: Path, private val parent: PomProject? = null) {
     inner class InvalidPomException(message: String, cause: Throwable? = null) :
@@ -47,10 +51,24 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
     }
     val surefireIncludes: List<String> by lazy {
         surefireConfig?.getChild("includes")?.getChildren("include")?.map { it.value }
-            ?: parent?.surefireIncludes.orEmpty()
+            ?: parent?.surefireIncludes ?: DEFAULT_SUREFIRE_INCLUDES
     }
     val surefireExcludes: List<String> by lazy {
         surefireConfig?.getChild("excludes")?.getChildren("exclude")?.map { it.value }
             ?: parent?.surefireExcludes.orEmpty()
+    }
+
+    val surefireIncludeMatchers by lazy { surefireIncludes.map { FileSystems.getDefault().getPathMatcher(it) } }
+    val surefireExcludeMatchers by lazy { surefireExcludes.map { FileSystems.getDefault().getPathMatcher(it) } }
+
+    private fun matchFile(p: Path, patterns: List<PathMatcher>): Boolean = patterns.any {
+        it.matches(p)
+    }
+
+    private fun matchSurefireTest(p: Path): Boolean =
+        matchFile(p, surefireIncludeMatchers) && !matchFile(p, surefireExcludeMatchers)
+
+    val allTests by lazy {
+        Files.find(testSourceDirectory, Int.MAX_VALUE, { p, _ -> matchSurefireTest(p) })
     }
 }
