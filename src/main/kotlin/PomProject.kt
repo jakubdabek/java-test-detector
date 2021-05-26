@@ -11,6 +11,11 @@ val DEFAULT_SUREFIRE_INCLUDES = listOf(
     "**/*TestCase.java",
 )
 
+val MAVEN_PROPERTIES = mapOf(
+    "basedir" to { proj: PomProject -> proj.pom.parent.toString() },
+    "project.basedir" to { proj: PomProject -> proj.pom.parent.toString() },
+)
+
 class PomProject(val pom: Path, private val parent: PomProject? = null) {
     inner class InvalidPomException(message: String, cause: Throwable? = null) :
         RuntimeException("Invalid pom: $pom: $message", cause)
@@ -45,11 +50,19 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
         null
     }
 
+    private fun String.substituteMavenProps(): String {
+        var result = this
+        MAVEN_PROPERTIES.forEach { (varName, subst) ->
+            result = result.replace("\${$varName}", subst(this@PomProject))
+        }
+        return result
+    }
+
     val sourceDirectory: Path?
-        get() = model.build.sourceDirectory?.let { it.tryToProjectPath()?.existsOrNull() }
+        get() = model.build.sourceDirectory?.let { it.substituteMavenProps().tryToProjectPath()?.existsOrNull() }
             ?: "src/main/java".tryToProjectPath()?.existsOrNull()
     val testSourceDirectory: Path?
-        get() = model.build.testSourceDirectory?.let { it.tryToProjectPath()?.existsOrNull() }
+        get() = model.build.testSourceDirectory?.let { it.substituteMavenProps().tryToProjectPath()?.existsOrNull() }
             ?: "src/test/java".tryToProjectPath()?.existsOrNull()
 
     private val parentSurefireConfig by lazy {
