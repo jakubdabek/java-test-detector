@@ -20,7 +20,13 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
     inner class InvalidPomException(message: String, cause: Throwable? = null) :
         RuntimeException("Invalid pom: $pom: $message", cause)
 
-    val name get() = pom.parent.fileName.toString()
+    val name: String
+        get() {
+            return if (pom.fileName.toString() == "pom.xml")
+                pom.parent.fileName.toString()
+            else
+                pom.fileName.toString()
+        }
 
     private val model = pom.toFile().inputStream().use(MavenXpp3Reader()::read)
     val modules = model.modules.orEmpty().map { it.toProjectPath() }.map {
@@ -33,8 +39,8 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
         PomProject(modulePom, this)
     }
 
-    val recursiveModules: List<PomProject> get() =
-        modules.flatMap { it.recursiveModules } + modules
+    val recursiveModules: List<PomProject>
+        get() = modules.flatMap { it.recursiveModules } + modules
 
     private fun Path.existsOrNull(): Path? = if (Files.exists(this)) this else null
 
@@ -96,8 +102,11 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
 
     val allTests: List<Path>? by lazy {
         testSourceDirectory?.let { testSourceDir ->
-            Files.find(testSourceDir, Int.MAX_VALUE, { p, attr -> !attr.isDirectory && matchSurefireTest(testSourceDir.relativize(p)) })
-                .collect(Collectors.toList())
+            Files.find(
+                testSourceDir,
+                Int.MAX_VALUE,
+                { p, attr -> !attr.isDirectory && matchSurefireTest(testSourceDir.relativize(p)) }
+            ).collect(Collectors.toList())
         }
     }
 }
