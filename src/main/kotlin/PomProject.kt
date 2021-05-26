@@ -71,12 +71,13 @@ class PomProject(val pom: Path, private val parent: PomProject? = null) {
         get() = model.build.testSourceDirectory?.let { it.substituteMavenProps().tryToProjectPath()?.existsOrNull() }
             ?: "src/test/java".tryToProjectPath()?.existsOrNull()
 
-    private val parentSurefireConfig by lazy {
+    private val surefireManagementConfig: Xpp3Dom? by lazy {
         model.build.pluginManagement?.pluginsAsMap?.get(SUREFIRE_ARTIFACT)?.configuration as? Xpp3Dom
+            ?: parent?.surefireManagementConfig
     }
-    private val surefireConfig by lazy {
+    private val surefireConfig: Xpp3Dom? by lazy {
         model.build?.pluginsAsMap?.get(SUREFIRE_ARTIFACT)?.configuration as? Xpp3Dom
-            ?: parent?.parentSurefireConfig
+            ?: parent?.surefireManagementConfig
     }
 
     val surefireIncludes: List<String> by lazy {
